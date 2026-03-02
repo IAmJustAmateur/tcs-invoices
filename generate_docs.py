@@ -40,7 +40,9 @@ from typing import Dict, Iterable, List, Optional, Tuple
 
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill
-from openpyxl.worksheet.table import Table, TableStyleInfo
+from openpyxl.worksheet.table import Table, TableStyleInfo, TableColumn
+from openpyxl.utils.cell import range_boundaries
+
 
 # =========================
 # PATH CONSTANTS (EDIT ME)
@@ -536,39 +538,66 @@ def replace_in_formulas(ws, old: str, new: str) -> None:
             if isinstance(cell.value, str) and cell.value.startswith("=") and old in cell.value:
                 cell.value = cell.value.replace(old, new)
 
+
 def clone_tables_from_template(template_ws, target_ws, suffix: str) -> dict[str, str]:
     """
-    openpyxl.copy_worksheet НЕ копирует Excel Tables.
-    Создаём новые Table-объекты на target_ws по образцу template_ws.
-    Возвращает mapping старое_имя -> новое_имя.
+    Воссоздаёт Excel Tables на target_ws (copy_worksheet их не переносит).
+    КРИТИЧНО: создаём tableColumns по заголовкам, иначе Excel может не открыть файл.
+    Возвращает mapping old_name -> new_name.
     """
     name_map: dict[str, str] = {}
 
-    for old_name, old_table in template_ws.tables.items():
+    for old_name, _ref_str in template_ws.tables.items():
+        old_table = template_ws.tables[old_name]  # Table object
         new_name = f"{old_name}_{suffix}"
         name_map[old_name] = new_name
 
-        new_table = Table(displayName=new_name, ref=old_table)
+        ref = old_table.ref  # например "A15:G16" (header + 1 строка)
+        min_col, min_row, max_col, max_row = range_boundaries(ref)
 
-        # if old_table.tableStyleInfo:
-        #     sti = old_table.tableStyleInfo
-        #     new_table.tableStyleInfo = TableStyleInfo(
-        #         name=sti.name,
-        #         showFirstColumn=sti.showFirstColumn,
-        #         showLastColumn=sti.showLastColumn,
-        #         showRowStripes=sti.showRowStripes,
-        #         showColumnStripes=sti.showColumnStripes,
-        #     )
+        # Создаём таблицу
+        new_table = Table(displayName=new_name, ref=ref)
 
-        # new_table.headerRowCount = old_table.headerRowCount
-        # new_table.totalsRowCount = old_table.totalsRowCount
+        # Стиль таблицы
+        sti = getattr(old_table, "tableStyleInfo", None)
+        if sti:
+            new_table.tableStyleInfo = TableStyleInfo(
+                name=sti.name,
+                showFirstColumn=sti.showFirstColumn,
+                showLastColumn=sti.showLastColumn,
+                showRowStripes=sti.showRowStripes,
+                showColumnStripes=sti.showColumnStripes,
+            )
+
+        # Header/totals
+        new_table.headerRowCount = getattr(old_table, "headerRowCount", 1)
+        new_table.totalsRowCount = getattr(old_table, "totalsRowCount", 0)
+
+        # >>> ВАЖНО: tableColumns (берём имена из строки заголовка на target_ws)
+        header_row = min_row
+        cols: list[TableColumn] = []
+        for i, col in enumerate(range(min_col, max_col + 1), start=1):
+            header_val = target_ws.cell(row=header_row, column=col).value
+            header_name = str(header_val).strip() if header_val not in (None, "") else f"Column{i}"
+            cols.append(TableColumn(id=i, name=header_name))
+
+        new_table.tableColumns = cols
+        # new_table.tableColumns.count = len(cols)
+
+        # AutoFilter (желательно, чтобы Excel не ругался)
+        try:
+            new_table.autoFilter = old_table.autoFilter
+        except Exception:
+            pass
 
         target_ws.add_table(new_table)
 
-        # ВАЖНО: structured references в формулах должны ссылаться на новое имя
+        # Если ты используешь structured references (ТаблицаАкт[[#This Row],...]),
+        # то дальше нужно заменить имя таблицы в формулах:
         replace_in_formulas(target_ws, old_name, new_name)
 
     return name_map
+
 def write_act_sheet(ws_act, *, table_name: str, client_name: str, doc_no: str, doc_date: dt.date,
                     contract_no: Optional[str], contract_date: Optional[dt.date], work_lines: List[WorkLine]):
     """
