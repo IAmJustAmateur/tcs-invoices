@@ -21,7 +21,7 @@ Author: generated with ChatGPT
 """
 
 from __future__ import annotations
-from copy import deepcopy
+from copy import copy
 import re
 
 import argparse
@@ -499,7 +499,7 @@ def find_next_doc_number(journal_path: str, date_suffix: str) -> int:
 def fmt_doc_number(n: int, date_suffix: str) -> str:
     return f"{n:03d}/{date_suffix}"
 
-
+ 
 def update_excel_table_ref(ws, table_name: str, new_last_row: int) -> None:
     """
     Expand an existing Excel Table to reach new_last_row.
@@ -569,7 +569,8 @@ def clone_tables_from_template(template_ws, target_ws, suffix: str) -> dict[str,
         replace_in_formulas(target_ws, old_name, new_name)
 
     return name_map
-def write_act_sheet(ws_act, client_name: str, doc_no: str, doc_date: dt.date, contract_no: Optional[str], contract_date: Optional[dt.date], work_lines: List[WorkLine]):
+def write_act_sheet(ws_act, *, table_name: str, client_name: str, doc_no: str, doc_date: dt.date,
+                    contract_no: Optional[str], contract_date: Optional[dt.date], work_lines: List[WorkLine]):
     """
     Fill a cloned 'акт' sheet.
     Template assumptions based on your file:
@@ -603,7 +604,6 @@ def write_act_sheet(ws_act, client_name: str, doc_no: str, doc_date: dt.date, co
     # Table
     header_row = 15
     first_data_row = 16
-    table_name = "ТаблицаАкт"
 
     # Determine how many template rows already exist in table
     # We'll assume the current table ref defines the available rows.
@@ -640,7 +640,7 @@ def write_act_sheet(ws_act, client_name: str, doc_no: str, doc_date: dt.date, co
     update_excel_table_ref(ws_act, table_name, new_last_row)
 
 
-def write_invoice_sheet(ws_inv, client_info_text: str, doc_no: str, doc_date: dt.date, contract_no: Optional[str], contract_date: Optional[dt.date], work_lines: List[WorkLine]):
+def write_invoice_sheet(ws_inv, *, table_name: str, client_info_text: str, doc_no: str, doc_date: dt.date, contract_no: Optional[str], contract_date: Optional[dt.date], work_lines: List[WorkLine]):
     """
     Fill a cloned 'счет' sheet.
     Template assumptions:
@@ -818,13 +818,15 @@ def append_to_invoice_journal(journal_path: str, doc_date: dt.date, doc_no: str,
     for c in range(1, max_col + 1):
         src = ws.cell(src_row, c)
         dst = ws.cell(dst_row, c)
-        dst._style = src._style
+        dst._style = copy(src._style)
         dst.number_format = src.number_format
-        dst.font = src.font
-        dst.border = src.border
-        dst.fill = src.fill
-        dst.alignment = src.alignment
-        dst.protection = src.protection
+
+        dst.font = copy(src.font)
+        dst.border = copy(src.border)
+        dst.fill = copy(src.fill)
+        dst.alignment = copy(src.alignment)
+        dst.protection = copy(src.protection)
+        dst.comment = src.comment  # если нужно, обычно не надо
 
         # copy formula/value
         if isinstance(src.value, str) and src.value.startswith("="):
@@ -857,7 +859,7 @@ def append_to_invoice_journal(journal_path: str, doc_date: dt.date, doc_no: str,
     update_excel_table_ref(ws, table_name, new_last_row=totals_row + 1)
 
     wb.save(journal_path)
-
+    wb.close()
 
 def mark_processed_order(ws_orders, header_map: Dict[str, int], row_idx: int):
     col = header_map["Номер заказ-наряда"]
@@ -990,13 +992,34 @@ def main():
             if nm in acts_wb.sheetnames:
                 raise RuntimeError(f"Лист '{nm}' уже существует в xlsm. Остановлено чтобы не перезаписать архив.")
 
-        suffix = doc_no.replace("/", "")
+        tbl_suffix = doc_no.replace("/", "")
 
-        ws_act, act_tables = clone_sheet_from_template(acts_wb, "акт", act_sheet_name, suffix=suffix)
-        ws_inv, inv_tables = clone_sheet_from_template(acts_wb, "счет", inv_sheet_name, suffix=suffix)
-
-        write_act_sheet(ws_act, client_name=client_name, doc_no=doc_no, doc_date=period_last, contract_no=contract_no, contract_date=contract_date, work_lines=work_lines)
-        write_invoice_sheet(ws_inv, client_info_text=client_info, doc_no=doc_no, doc_date=period_last, contract_no=contract_no, contract_date=contract_date, work_lines=work_lines)
+        ws_act, act_tables = clone_sheet_from_template(acts_wb, "акт", act_sheet_name, suffix=tbl_suffix)
+        ws_inv, inv_tables = clone_sheet_from_template(acts_wb, "счет", inv_sheet_name, suffix=tbl_suffix)
+        act_table_name = act_tables["ТаблицаАкт"]
+        inv_table_name = inv_tables["ТаблицаСчет"]
+        
+        write_act_sheet(
+            ws_act,
+            table_name=act_table_name,
+            client_name=client_name,
+            doc_no=doc_no,
+            doc_date=period_last,
+            contract_no=contract_no,
+            contract_date=contract_date,
+            work_lines=work_lines,
+        )
+        write_invoice_sheet(
+            ws_inv,
+            table_name=inv_table_name,
+            client_info_text=client_info,
+            doc_no=doc_no,
+            doc_date=period_last,
+            contract_no=contract_no,
+            contract_date=contract_date,
+            work_lines=work_lines,
+        )
+        
 
         # Append to invoice journal
         append_to_invoice_journal(
@@ -1023,6 +1046,8 @@ def main():
     # Save updated workbooks
     acts_wb.save(acts_out)
     orders_wb_w.save(orders_out)
+    acts_wb.close()
+    orders_wb_w.close()
 
     print("\nГотово.")
     print(f"Создано комплектов акт+счет: {created_docs}")
