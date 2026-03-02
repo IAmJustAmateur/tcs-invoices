@@ -1,0 +1,30 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Generate Docs (Dry Run)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/generate_docs.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--year", "2026",
+                "--month", "2"
+            ],
+            "envFile": "${workspaceFolder}/.env"
+        },
+        {
+            "name": "Generate Docs (Apply)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/generate_docs.py",
+            "console": "integratedTerminal",
+            "args": [
+                "--year", "2026",
+                "--month", "2",
+                "--apply"
+            ],
+            "envFile": "${workspaceFolder}/.env"
+        }
+    ]
+}
